@@ -1,0 +1,282 @@
+#include "level.h"
+#include "graphics.h"
+#include "globals.h"
+#include "utils.h"
+
+#include "tinyxml2.h"
+
+#include <SDL2/SDL.h>
+
+#include <sstream>
+#include <algorithm>
+#include <cmath>
+
+using namespace tinyxml2;
+
+Level::Level() {}
+
+Level::Level(std::string mapName, Vector2 spawnPoint, Graphics &graphics) :
+              _mapName(mapName),
+              _spawnPoint(spawnPoint),
+              _size(Vector2(0,0))
+{
+  this->loadMap(mapName, graphics);
+}
+
+Level::~Level() {
+
+}
+
+void Level::loadMap(std::string mapName, Graphics &graphics) {
+  //Parse the .tmx file
+  XMLDocument doc;
+  std::stringstream ss;
+  ss << "content/maps/" << mapName << ".tmx";
+  doc.LoadFile(ss.str().c_str());
+
+  XMLElement* mapNode = doc.FirstChildElement("map");
+
+  //Get the width and the height of the whole map and store it in _size
+  int width, height;
+  mapNode->QueryIntAttribute("width", &width);
+  mapNode->QueryIntAttribute("height", &height);
+  this->_size = Vector2(width, height);
+
+  //Get the width and the height of the tiles and store it in _tileSize
+  int tileWidth, tileHeight;
+  mapNode->QueryIntAttribute("tilewidth", &tileWidth);
+  mapNode->QueryIntAttribute("tileheight", &tileHeight);
+  this->_tileSize = Vector2(tileWidth, tileHeight);
+
+  //Loading the tilesets
+  XMLElement* pTileset = mapNode->FirstChildElement("tileset");
+  if (pTileset != NULL) {
+    while (pTileset) {
+      int firstgid;
+      const char* source = pTileset->Attribute("source");
+      // char* path;
+      std::string sourcePath(source);
+      std::stringstream ss;
+      ss << "content";
+      for (int i = 2; i < sourcePath.length(); ++i) {
+          
+          // mapOne saves source as an xml. We need it to pick up our PNG
+          if (source[i] == '.') break; 
+
+          ss << source[i];
+
+      }
+      // Add png extension
+      ss << ".png";
+      pTileset->QueryIntAttribute("firstgid", &firstgid);
+      SDL_Texture* tex = SDL_CreateTextureFromSurface(graphics.getRenderer(), graphics.loadImage(ss.str()));
+      this->_tilesets.push_back(Tileset(tex, firstgid));
+
+      pTileset = pTileset->NextSiblingElement("tileset");
+    }
+  }
+
+  //Loading the layers
+  XMLElement* pLayer = mapNode->FirstChildElement("layer");
+  if (pLayer != NULL) {
+    while (pLayer) {
+      //loading the data element
+      XMLElement* pData = pLayer->FirstChildElement("data");
+      if (pData != NULL) {
+        while (pData) {
+          //Loading the tile element
+          const char* tilearray;
+
+          tilearray = pData->GetText();
+					std::string tilestring(tilearray);
+
+					std::vector<int> vect;
+
+					std::stringstream ss(tilestring);
+
+					int i;
+					while (ss >> i)
+					{
+						vect.push_back(i);
+
+						if (ss.peek() == ',')
+						{
+							ss.ignore();
+						}
+					}
+          for (int j = 0; j < vect.size(); j++)
+					{
+						if (vect.at(j) != 0)
+						{
+							Tileset tls;
+							for (int k = 0; k < this->_tilesets.size(); k++)
+							{
+								if (this->_tilesets[k].FirstGid <= vect.at(j))
+								{
+									
+									//This is the tileset we want
+									tls = this->_tilesets.at(k);
+									
+									break;
+								}
+							}
+							if (tls.FirstGid == -1)
+							{
+								printf("No tileset was found");
+                break;
+							}
+
+              //Get the position of the tile in the level
+							int xx = 0;
+							int yy = 0;
+							xx = j % width;
+							xx *= tileWidth;
+							yy = j / width;
+              yy *= tileHeight;
+							Vector2 finalTilePosition = Vector2(xx, yy);
+							//Calculate the position of the tile in the tileset
+							int tilesetWidth, tilesetHeight;
+							SDL_QueryTexture(tls.Texture, NULL, NULL, &tilesetWidth, &tilesetHeight);
+							// std::cout << tilesetWidth << " " << tilesetHeight << "<- tileset width and height\n";
+              // int tsxx = vect.at(j) % (tilesetWidth / tileWidth) - 1;
+              int tsxx = (vect.at(j) - 1) % (tilesetWidth/tileWidth) * tileWidth;
+							int tsyy = (vect.at(j) / (tilesetWidth / tileWidth)) * tileHeight;
+							Vector2 finalTileSetPosition = Vector2(tsxx, tsyy);
+
+              // std::cout << "at pos " << xx << ", " << yy << " draw tile " << tsxx << ", " << tsyy << "\n";
+							//Build the actual tile and add it to the level's tile list
+							
+							Tile tile(tls.Texture, Vector2(tileWidth, tileHeight), finalTileSetPosition, finalTilePosition);
+							this->_tileList.push_back(tile);
+						}
+					}
+
+
+          pData = pData->NextSiblingElement("data");
+        }
+      }
+      pLayer = pLayer->NextSiblingElement("layer");
+    }
+  }
+
+  //Parse out the collision
+  XMLElement* pObjectGroup = mapNode->FirstChildElement("objectgroup");
+  if (pObjectGroup != NULL) {
+    while (pObjectGroup) {
+      const char* name = pObjectGroup->Attribute("name");
+      std::stringstream ss;
+      ss << name;
+      if (ss.str() == "collisions") {
+        XMLElement* pObject = pObject = pObjectGroup->FirstChildElement("object");
+        if (pObject != NULL) {
+          while(pObject) {
+            float x, y, width, height;
+            x = pObject->FloatAttribute("x");
+            y = pObject->FloatAttribute("y");
+            width = pObject->FloatAttribute("width");
+            height = pObject->FloatAttribute("height");
+            this->_collisionRects.push_back(Rectangle(
+                    std::ceil(x) * globals::SPRITE_SCALE,
+                    std::ceil(y) * globals::SPRITE_SCALE,
+                    std::ceil(width) * globals::SPRITE_SCALE,
+                    std::ceil(height) * globals::SPRITE_SCALE
+            ));
+
+            pObject = pObject->NextSiblingElement("object");
+          }
+        }
+      }
+      //Other objectgroups go here with an else if (ss.str() == "whatever")
+      else if (ss.str() == "slopes") {
+        XMLElement* pObject = pObjectGroup->FirstChildElement("object");
+        if (pObject != NULL) {
+          while(pObject) {
+            std::vector<Vector2> points;
+            Vector2 p1;
+            p1 = Vector2(std::ceil(pObject->FloatAttribute("x")), std::ceil(pObject->FloatAttribute("y")));
+
+            XMLElement* pPolyline = pObject->FirstChildElement("polyline");
+            if (pPolyline != NULL) {
+              std::vector<std::string> pairs;
+              const char* pointString = pPolyline->Attribute("points");
+
+              std::stringstream ss;
+              ss << pointString;
+              Utils::split(ss.str(), pairs, ' ');
+              //Now we have each of the pairs. Loop through the list of pairs
+              //and split them into Vector2s and then store them in our points vector
+              for (int i = 0; i < pairs.size(); i++) {
+                std::vector<std::string> ps;
+                Utils::split(pairs.at(i), ps, ',');
+                points.push_back(Vector2(std::stoi(ps.at(0)), std::stoi(ps.at(1))));
+              }
+            }
+
+            for (int i = 0; i < points.size(); i += 2) {
+              this->_slopes.push_back(Slope(
+                Vector2((p1.x + points.at(i < 2 ? i : i - 1).x) * globals::SPRITE_SCALE,
+                        (p1.y + points.at(i < 2 ? i : i - 1).y) * globals::SPRITE_SCALE),
+                Vector2((p1.x + points.at(i < 2 ? i + 1 : i).x) * globals::SPRITE_SCALE,
+                        (p1.y + points.at(i < 2 ? i + 1 : i).y) * globals::SPRITE_SCALE)
+              ));
+            }
+
+            pObject = pObject->NextSiblingElement("object");
+          }
+        }
+      }
+      else if (ss.str() == "spawn points") {
+        XMLElement* pObject = pObjectGroup->FirstChildElement("object");
+        if (pObject != NULL) {
+          float x = pObject->FloatAttribute("x");
+          float y = pObject->FloatAttribute("y");
+          const char* name = pObject->Attribute("name");
+          std::stringstream ss;
+          ss << name;
+          if (ss.str() == "player") {
+            this->_spawnPoint = Vector2(std::ceil(x) * globals::SPRITE_SCALE, std::ceil(y) * globals::SPRITE_SCALE);
+          }
+
+          pObject = pObject->NextSiblingElement("object");
+        }
+      }
+
+      pObjectGroup = pObjectGroup->NextSiblingElement("objectgroup");
+    }
+  }
+
+}
+
+void Level::update(int elapsedTime) {
+
+}
+
+void Level::draw(Graphics &graphics) {
+  for (int i = 0; i < this->_tileList.size(); i++) {
+    this->_tileList.at(i).draw(graphics);
+  }
+}
+
+std::vector<Rectangle> Level::checkTileCollisions(const Rectangle &other) {
+  std::vector<Rectangle> others;
+  for (int i = 0; i < this->_collisionRects.size(); i++) {
+    if (this->_collisionRects.at(i).collidesWith(other)) {
+      others.push_back(this->_collisionRects.at(i));
+    }
+  }
+  return others;
+}
+
+std::vector<Slope> Level::checkSlopeCollisions(const Rectangle &other) {
+  std::vector<Slope> others;
+  for (int i = 0; i < this->_slopes.size(); i++) {
+    if (this->_slopes.at(i).collidesWith(other)) {
+      others.push_back(this->_slopes.at(i));
+    }
+  }
+  return others;
+}
+
+const Vector2 Level::getPlayerSpawnPoint() const {
+  return this->_spawnPoint;
+}

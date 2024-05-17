@@ -1,0 +1,2 @@
+all:
+	g++ -Isrc/include -Iheaders -Lsrc/lib -o main main.cpp graphics.cpp game.cpp input.cpp sprite.cpp animatedsprite.cpp player.cpp level.cpp tinyxml2.cpp tile.cpp -lmingw32 -lSDL2main -lSDL2 -lSDL2_image
